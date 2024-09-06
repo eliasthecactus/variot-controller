@@ -1,7 +1,7 @@
 #include <Wire.h>              // Wire library (required for I2C devices)
 #include <Adafruit_BMP280.h>   // Adafruit BMP280 sensor library
 #include <ESP8266WiFi.h>       // ESP8266 WiFi library
-#include <ESP8266WebServer.h>  // ESP8266 Web Server library
+#include <ESP8266mDNS.h>       // ESP8266 mDNS library
 #include <WebSocketsServer.h>  // WebSocket Server library
 #include <ArduinoJson.h>       // ArduinoJson library
 
@@ -21,69 +21,10 @@ const int interval = 800;  // Time interval in milliseconds
 const char* apSSID = "NodeMCU_Vario";  // AP SSID
 const char* apPassword = "123456789";  // AP Password
 
-// Create instances
-ESP8266WebServer server(80);
+// Create WebSocket instance
 WebSocketsServer webSocket = WebSocketsServer(81);
 
 bool buzzerEnabled = true; // Default state
-
-void handleRoot() {
-  // Serve the HTML page with a loading indicator and a toggle button
-  String html = "<html><head><title>IoT Vario</title>";
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; flex-direction: column; height: 100vh; }";
-  html += "#loading { font-size: 20px; color: #555; display: flex; flex-direction: column; align-items: center; }";
-  html += "#data { display: none; display: flex; flex-direction: column; align-items: center; }";
-  html += "#spinner { border: 16px solid #f3f3f3; /* Light grey */";
-  html += "border-top: 16px solid #3498db; /* Blue */";
-  html += "border-radius: 50%;";
-  html += "width: 120px; height: 120px;";
-  html += "animation: spin 2s linear infinite; }";
-  html += "#toggle { margin-top: 20px; }";
-  html += "@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }";
-  html += "</style>";
-  html += "<script>";
-  html += "window.onload = function() {";
-  html += "  var ws = new WebSocket('ws://' + location.hostname + ':81/');";
-  html += "  var loading = document.getElementById('loading');";
-  html += "  var dataDiv = document.getElementById('data');";
-  html += "  var spinner = document.getElementById('spinner');";
-  html += "  var toggleButton = document.getElementById('toggleButton');";
-  html += "  var buzzerEnabled = true;";
-  html += "  ws.onopen = function() {";
-  html += "    console.log('WebSocket connection established');";
-  html += "    loading.style.display = 'none';";
-  html += "    dataDiv.style.display = 'flex';";
-  html += "  };";
-  html += "  ws.onmessage = function(event) {";
-  html += "    var data = JSON.parse(event.data);";
-  html += "    document.getElementById('altitude').innerText = 'Current Altitude: ' + data.altitude + ' m';";
-  html += "    document.getElementById('verticalSpeed').innerText = 'Vertical Speed: ' + data.verticalSpeed + ' m/s';";
-  html += "    buzzerEnabled = data.buzzerEnabled;";
-  html += "    toggleButton.innerText = buzzerEnabled ? 'Disable Sound' : 'Enable Sound';";
-  html += "  };";
-  html += "  ws.onerror = function() {";
-  html += "    console.log('WebSocket error');";
-  html += "  };";
-  html += "  toggleButton.onclick = function() {";
-  html += "    var action = buzzerEnabled ? 'disable' : 'enable';";
-  html += "    ws.send(JSON.stringify({ action: action }));";
-  html += "  };";
-  html += "};";
-  html += "</script></head><body>";
-  html += "<h1>Vario Data</h1>";
-  html += "<div id='loading'>";
-  html += "  <div id='spinner'></div>";
-  html += "  Loading data...";
-  html += "</div>";
-  html += "<div id='data'>";
-  html += "  <p id='altitude'>Current Altitude: </p>";
-  html += "  <p id='verticalSpeed'>Vertical Speed: </p>";
-  html += "  <button id='toggleButton'>Disable Sound</button>";
-  html += "</div>";
-  html += "</body></html>";
-  server.send(200, "text/html", html);
-}
 
 void setup() {
   // Initialize Serial Monitor
@@ -94,11 +35,20 @@ void setup() {
   WiFi.softAP(apSSID, apPassword);
   Serial.println("Access Point started");
 
-  // Initialize WebSocket and HTTP Server
+  // Initialize mDNS
+  if (!MDNS.begin("vario")) {
+    Serial.println("Error starting mDNS");
+    while (1);
+  }
+  Serial.println("mDNS started");
+
+  // Add a service to mDNS
+  MDNS.addService("http", "tcp", 80);
+  Serial.println("mDNS service added");
+
+  // Initialize WebSocket
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
-  server.on("/", HTTP_GET, handleRoot);
-  server.begin();
 
   // Initialize BMP280 sensor
   Wire.begin(D2, D1);
@@ -119,9 +69,11 @@ void setup() {
 }
 
 void loop() {
-  // Handle WebSocket and HTTP requests
+  // Handle WebSocket communication
   webSocket.loop();
-  server.handleClient();
+
+  // Handle mDNS
+  MDNS.update();
 
   // Read current altitude from BMP280 sensor
   float currentAltitude = bmp280.readAltitude(1013.25);
