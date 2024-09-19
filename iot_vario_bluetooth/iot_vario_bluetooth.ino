@@ -25,10 +25,18 @@ bool buzzerEnabled = true; // Track whether the buzzer is enabled or not
 
 // Variables to manage altitude changes
 float previousAltitude = 0;
-const float climbThreshold = 0.1; // Threshold for climbing (meters per second)
-const float descendThreshold = -0.1; // Threshold for descending (meters per second)
+const float climbThreshold = 0.5; // Climb threshold (in meters per second)
+const float descendThreshold = -1; // Descend threshold (in meters per second)
+const float noiseThreshold = 0.1;  // Ignore small changes within this range (noise)
 unsigned long lastBeepTime = 0;
 const unsigned long beepInterval = 200; // Time between beeps in milliseconds
+
+float getAverageAltitude() {
+    float firstAltitude = bmp.readAltitude(1013.25); // First altitude reading
+    delay(50);  // Short delay between readings
+    float secondAltitude = bmp.readAltitude(1013.25); // Second altitude reading
+    return (firstAltitude + secondAltitude) / 2.0;  // Return the average of the two readings
+}
 
 void setup() {
   Serial.begin(9600);
@@ -43,6 +51,7 @@ void setup() {
   // Initialize QMC5883L (GY-273)
   Wire.begin();
   compass.init();
+
 
   // Initialize BLE
   if (!BLE.begin()) {
@@ -84,11 +93,11 @@ void loop() {
                 Serial.println(buzzerEnabled ? "Yes" : "No");
             }
 
-            // Read sensor data from BMP280
-            float altitude = bmp.readAltitude(1013.25); // Pressure at sea level in hPa
+            // Read and average altitude measurements
+            float altitude = getAverageAltitude();
             float temperature = bmp.readTemperature();
 
-            // Read angle from QMC5883L
+            // Read angle from QMC5883L (compass)
             compass.read();
             byte azimuth = compass.getAzimuth();
             char direction[3];
@@ -106,7 +115,13 @@ void loop() {
 
             // Determine altitude change rate
             float altitudeChange = altitude - previousAltitude;
-            previousAltitude = altitude;
+
+            // Update previous altitude if the change is significant
+            if (abs(altitudeChange) > noiseThreshold) {
+                previousAltitude = altitude;
+            } else {
+                altitudeChange = 0;  // Ignore changes smaller than the noise threshold
+            }
 
             // Beep based on altitude change if buzzer is enabled
             if (buzzerEnabled) {
